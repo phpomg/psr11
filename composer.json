@@ -1,0 +1,14 @@
+{
+    "name": "phpomg/psr11",
+    "description": "php psr11",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "PHPOMG\\Psr11\\": "src/"
+        }
+    },
+    "require": {
+        "psr/container": "^2.0"
+    }
+}
