@@ -14,8 +14,9 @@ class Container implements ContainerInterface
 {
     private $aliass = [];
     private $args = [];
-    private $callbacks = [];
+    private $calls = [];
     private $objs = [];
+    private $callbacks = [];
 
     public function has(string $id): bool
     {
@@ -33,9 +34,9 @@ class Container implements ContainerInterface
                     sprintf('`%s` is not an existing class and therefore cannot be resolved', $id)
                 );
             }
-            if (isset($this->callbacks[$id])) {
-                $args = $this->reflectArguments($this->callbacks[$id]);
-                $obj = call_user_func($this->callbacks[$id], ...$args);
+            if (isset($this->calls[$id])) {
+                $args = $this->reflectArguments($this->calls[$id]);
+                $obj = call_user_func($this->calls[$id], ...$args);
                 if (!is_a($obj, $id)) {
                     throw new ContainerException(sprintf(
                         'return value must be instanseof `%s`',
@@ -47,6 +48,16 @@ class Container implements ContainerInterface
                 $args = $reflector->getConstructor() === null ? [] : $this->reflectArguments([$id, '__construct'], $this->args[$id] ?? []);
                 $obj = $reflector->newInstanceArgs($args);
             }
+
+            if (isset($this->callbacks[$id])) {
+                foreach ($this->callbacks[$id] as $fn) {
+                    $args = $this->reflectArguments($fn, [
+                        $id => $obj,
+                    ]);
+                    call_user_func($fn, ...$args);
+                }
+            }
+
             return $obj;
         } else {
             if (array_key_exists($id, $this->objs)) {
@@ -58,9 +69,9 @@ class Container implements ContainerInterface
                     );
                 }
 
-                if (isset($this->callbacks[$id])) {
-                    $args = $this->reflectArguments($this->callbacks[$id]);
-                    $obj = call_user_func($this->callbacks[$id], ...$args);
+                if (isset($this->calls[$id])) {
+                    $args = $this->reflectArguments($this->calls[$id]);
+                    $obj = call_user_func($this->calls[$id], ...$args);
                     if (!is_a($obj, $id)) {
                         throw new ContainerException(sprintf(
                             'return value must be instanseof `%s`',
@@ -71,6 +82,15 @@ class Container implements ContainerInterface
                     $reflector = new ReflectionClass($id);
                     $args = $reflector->getConstructor() === null ? [] : $this->reflectArguments([$id, '__construct'], $this->args[$id] ?? []);
                     $obj = $reflector->newInstanceArgs($args);
+                }
+
+                if (isset($this->callbacks[$id])) {
+                    foreach ($this->callbacks[$id] as $fn) {
+                        $args = $this->reflectArguments($fn, [
+                            $id => $obj,
+                        ]);
+                        call_user_func($fn, ...$args);
+                    }
                 }
 
                 $this->objs[$id] = $obj;
@@ -90,6 +110,10 @@ class Container implements ContainerInterface
             $this->args[$to] = $this->args[$from];
             unset($this->args[$from]);
         }
+        if (isset($this->calls[$from])) {
+            $this->calls[$to] = $this->calls[$from];
+            unset($this->calls[$from]);
+        }
         if (isset($this->callbacks[$from])) {
             $this->callbacks[$to] = $this->callbacks[$from];
             unset($this->callbacks[$from]);
@@ -104,6 +128,10 @@ class Container implements ContainerInterface
                 $this->args[$id] = $this->args[$to];
                 unset($this->args[$to]);
             }
+            if (isset($this->calls[$to])) {
+                $this->calls[$id] = $this->calls[$to];
+                unset($this->calls[$to]);
+            }
             if (isset($this->callbacks[$to])) {
                 $this->callbacks[$id] = $this->callbacks[$to];
                 unset($this->callbacks[$to]);
@@ -112,7 +140,7 @@ class Container implements ContainerInterface
         return $this;
     }
 
-    public function setArguments(string $id, array $args): self
+    public function setArgument(string $id, array $args): self
     {
         $id = $this->getTrueId($id);
         $this->args[$id] = $args;
@@ -120,11 +148,21 @@ class Container implements ContainerInterface
         return $this;
     }
 
+    public function setCallback(string $id, callable $fn): self
+    {
+        $id = $this->getTrueId($id);
+        if (!isset($this->callbacks[$id])) {
+            $this->callbacks[$id] = [];
+        }
+        $this->callbacks[$id][] = $fn;
+        return $this;
+    }
+
     public function set(string $id, object $object)
     {
         $id = $this->getTrueId($id);
         if ($object instanceof Closure) {
-            $this->callbacks[$id] = $object;
+            $this->calls[$id] = $object;
         } else {
             if (!is_a($object, $id)) {
                 throw new ContainerException(sprintf(
