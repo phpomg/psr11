@@ -200,18 +200,25 @@ class Container implements ContainerInterface
 
         $res = [];
         foreach ($params as $param) {
-            $res[] = $default[$param->getName()] ?? $this->getParam($param);
+            $res[] = $this->getParam($param, $default);
         }
         return $res;
     }
 
-    private function getParam(ReflectionParameter $param)
+    private function getParam(ReflectionParameter $param, array $default = [])
     {
+        if (isset($default[$param->getName()])) {
+            return $default[$param->getName()];
+        }
+
         $type = $param->getType();
         if ($type !== null) {
             $type_name = $type->getName();
 
             if (!$type->isBuiltin()) {
+                if (isset($default[$type_name])) {
+                    return $default[$type_name];
+                }
                 if ($this->has($type_name)) {
                     $result = $this->get($type_name);
                     if ($result instanceof $type_name) {
