@@ -12,180 +12,92 @@ use ReflectionParameter;
 
 class Container implements ContainerInterface
 {
-    private $aliass = [];
-    private $args = [];
-    private $calls = [];
-    private $objs = [];
     private $callbacks = [];
+    private $items = [];
+    private $caches = [];
+    private $args = [];
 
     public function has(string $id): bool
     {
-        $id = $this->getTrueId($id);
         return class_exists($id);
     }
 
     public function get(string $id, bool $new = false)
     {
-        $id = $this->getTrueId($id);
-
-        if ($new) {
-            if (!class_exists($id)) {
-                throw new NotFoundException(
-                    sprintf('`%s` is not an existing class and therefore cannot be resolved', $id)
-                );
-            }
-            if (isset($this->calls[$id])) {
-                $args = $this->reflectArguments($this->calls[$id]);
-                $obj = call_user_func($this->calls[$id], ...$args);
-                if (!is_a($obj, $id)) {
-                    throw new ContainerException(sprintf(
-                        'return value must be instanseof `%s`',
-                        $id,
-                    ));
-                }
-            } else {
-                $reflector = new ReflectionClass($id);
-                $args = $reflector->getConstructor() === null ? [] : $this->reflectArguments([$id, '__construct'], $this->args[$id] ?? []);
-                $obj = $reflector->newInstanceArgs($args);
-            }
-
-            if (isset($this->callbacks[$id])) {
-                foreach ($this->callbacks[$id] as $fn) {
-                    $args = $this->reflectArguments($fn, [
-                        $id => $obj,
-                    ]);
-                    call_user_func($fn, ...$args);
-                }
-            }
-
-            return $obj;
-        } else {
-            if (array_key_exists($id, $this->objs)) {
-                return $this->objs[$id];
-            } else {
-                if (!class_exists($id)) {
-                    throw new NotFoundException(
-                        sprintf('`%s` is not an existing class and therefore cannot be resolved', $id)
-                    );
-                }
-
-                if (isset($this->calls[$id])) {
-                    $args = $this->reflectArguments($this->calls[$id]);
-                    $obj = call_user_func($this->calls[$id], ...$args);
-                    if (!is_a($obj, $id)) {
-                        throw new ContainerException(sprintf(
-                            'return value must be instanseof `%s`',
-                            $id,
-                        ));
-                    }
-                } else {
-                    $reflector = new ReflectionClass($id);
-                    $args = $reflector->getConstructor() === null ? [] : $this->reflectArguments([$id, '__construct'], $this->args[$id] ?? []);
-                    $obj = $reflector->newInstanceArgs($args);
-                }
-
-                if (isset($this->callbacks[$id])) {
-                    foreach ($this->callbacks[$id] as $fn) {
-                        $args = $this->reflectArguments($fn, [
-                            $id => $obj,
-                        ]);
-                        call_user_func($fn, ...$args);
-                    }
-                }
-
-                $this->objs[$id] = $obj;
-                return $obj;
+        if (!$new) {
+            if (array_key_exists($id, $this->caches)) {
+                return $this->caches[$id];
             }
         }
+
+        if (isset($this->items[$id])) {
+            $args = $this->reflectArguments($this->items[$id]);
+            $obj = call_user_func($this->items[$id], ...$args);
+            if (!is_a($obj, $id)) {
+                throw new ContainerException(sprintf(
+                    'return value must be subof `%s`',
+                    $id,
+                ));
+            }
+        } elseif (class_exists($id)) {
+            $reflector = new ReflectionClass($id);
+            $args = $reflector->getConstructor() === null ? [] : $this->reflectArguments([$id, '__construct'], self::$args[$id] ?? []);
+            $obj = $reflector->newInstanceArgs($args);
+        } else {
+            throw new NotFoundException(
+                sprintf('Alias (%s) is not an existing class and therefore cannot be resolved', $id)
+            );
+        }
+
+        foreach ($this->callbacks[$id] ?? [] as $vo) {
+            $args = $this->reflectArguments($vo, [$id => $obj]);
+            $temp = call_user_func($vo, ...$args);
+            $obj =  is_null($temp) ? $obj : $temp;
+            if (!is_a($obj, $id)) {
+                throw new ContainerException(sprintf(
+                    'return value must be subof `%s`',
+                    $id,
+                ));
+            }
+        }
+
+        $this->caches[$id] = $obj;
+
+        return $obj;
     }
 
-    public function setAlias(string $from, string $to): self
+    public function set(string $id, Closure $fn): self
     {
-        $this->aliass[$from] = $to;
-        if (isset($this->objs[$from])) {
-            $this->objs[$to] = $this->objs[$from];
-            unset($this->objs[$from]);
-        }
-        if (isset($this->args[$from])) {
-            $this->args[$to] = $this->args[$from];
-            unset($this->args[$from]);
-        }
-        if (isset($this->calls[$from])) {
-            $this->calls[$to] = $this->calls[$from];
-            unset($this->calls[$from]);
-        }
-        if (isset($this->callbacks[$from])) {
-            $this->callbacks[$to] = $this->callbacks[$from];
-            unset($this->callbacks[$from]);
-        }
-        $id = $this->getTrueId($to);
-        if ($id != $to) {
-            if (isset($this->objs[$to])) {
-                $this->objs[$id] = $this->objs[$to];
-                unset($this->objs[$to]);
+        $reflector = new ReflectionFunction($fn);
+        $params = $reflector->getParameters();
+
+        $find = false;
+        foreach ($params as $param) {
+            $type = $param->getType();
+            if (null === $type) {
+                continue;
             }
-            if (isset($this->args[$to])) {
-                $this->args[$id] = $this->args[$to];
-                unset($this->args[$to]);
-            }
-            if (isset($this->calls[$to])) {
-                $this->calls[$id] = $this->calls[$to];
-                unset($this->calls[$to]);
-            }
-            if (isset($this->callbacks[$to])) {
-                $this->callbacks[$id] = $this->callbacks[$to];
-                unset($this->callbacks[$to]);
+            if ($type->getName() === $id) {
+                $find = true;
+                break;
             }
         }
+
+        if ($find) {
+            $this->callbacks[$id][] = $fn;
+        } else {
+            $this->items[$id] = $fn;
+        }
+        unset($this->caches[$id]);
+
         return $this;
     }
 
     public function setArgument(string $id, array $args): self
     {
-        $id = $this->getTrueId($id);
         $this->args[$id] = $args;
-        unset($this->objs[$id]);
+        unset($this->caches[$id]);
         return $this;
-    }
-
-    public function setCallback(string $id, callable $fn): self
-    {
-        $id = $this->getTrueId($id);
-        if (!isset($this->callbacks[$id])) {
-            $this->callbacks[$id] = [];
-        }
-        $this->callbacks[$id][] = $fn;
-        return $this;
-    }
-
-    public function set(string $id, object $object)
-    {
-        $id = $this->getTrueId($id);
-        if ($object instanceof Closure) {
-            $this->calls[$id] = $object;
-        } else {
-            if (!is_a($object, $id)) {
-                throw new ContainerException(sprintf(
-                    'the param $obj_or_callable must be instanseof `%s`',
-                    $id,
-                ));
-            }
-            $this->objs[$id] = $object;
-        }
-    }
-
-    private function getTrueId(string $id, string $from = null): string
-    {
-        if ($id === $from) {
-            throw new ContainerException(sprintf(
-                'Unable to resolve `%s` alias endless loop',
-                $from,
-            ));
-        }
-        if (isset($this->aliass[$id])) {
-            return $this->getTrueId($this->aliass[$id], is_null($from) ? $id : $from);
-        }
-        return $id;
     }
 
     public function reflectArguments($callable, array $default = []): array
