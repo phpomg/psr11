@@ -41,7 +41,7 @@ class Container implements ContainerInterface
             }
         } elseif (class_exists($id)) {
             $reflector = new ReflectionClass($id);
-            $args = $reflector->getConstructor() === null ? [] : $this->reflectArguments([$id, '__construct'], self::$args[$id] ?? []);
+            $args = $reflector->getConstructor() === null ? [] : $this->reflectArguments([$id, '__construct'], $this->args[$id] ?? []);
             $obj = $reflector->newInstanceArgs($args);
         } else {
             throw new NotFoundException(
